@@ -18,7 +18,8 @@ int g_radius = 2;
 HWND g_hwnd = NULL;
 
 void RedrawCrosshair() {
-    if (g_hwnd) InvalidateRect(g_hwnd, NULL, TRUE);
+    if (g_hwnd) RedrawWindow(g_hwnd, NULL, NULL,
+        RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
 void ForceTopMost() {
@@ -36,6 +37,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc;
         GetClientRect(hwnd, &rc);
+        // 用透明色（黑色）清底，擦掉旧准心
+        HBRUSH bg = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+        // 画白色准心
         int cx = rc.right / 2;
         int cy = rc.bottom / 2;
         HBRUSH brush = CreateSolidBrush(RGB(255, 255, 255));

@@ -10,6 +10,7 @@
 #define ID_SIZE_8     2004
 #define ID_SIZE_10    2005
 #define TIMER_TOPMOST 1
+#define MUTEX_NAME    L"Global\\CrosshairOverlaySingleInstance"
 
 NOTIFYICONDATA nid = {};
 HMENU hTrayMenu = NULL;
@@ -17,27 +18,40 @@ HMENU hSizeMenu = NULL;
 int g_radius = 2;
 HWND g_hwnd = NULL;
 
+void UpdateTrayTip() {
+    wsprintf(nid.szTip, L"准心覆盖 [%dpx] - 右键设置", g_radius);
+    Shell_NotifyIcon(NIM_MODIFY, &nid);
+}
+
 void RedrawCrosshair() {
-    if (g_hwnd) RedrawWindow(g_hwnd, NULL, NULL,
-        RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    if (g_hwnd) {
+        RedrawWindow(g_hwnd, NULL, NULL,
+            RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        UpdateTrayTip();
+    }
 }
 
 void ForceTopMost() {
     if (!g_hwnd) return;
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, sw, sh,
+    int sw = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int sh = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int w  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int h  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    SetWindowPos(g_hwnd, HWND_TOPMOST, sw, sh, w, h,
         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;  // 防止默认擦除导致闪烁，WM_PAINT 里自己清
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc;
         GetClientRect(hwnd, &rc);
-        // 用透明色（黑色）清底，擦掉旧准心
+        // 用透明色（黑色）清底
         HBRUSH bg = CreateSolidBrush(RGB(0, 0, 0));
         FillRect(hdc, &rc, bg);
         DeleteObject(bg);
@@ -46,9 +60,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int cy = rc.bottom / 2;
         HBRUSH brush = CreateSolidBrush(RGB(255, 255, 255));
         HPEN pen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
-        SelectObject(hdc, brush);
-        SelectObject(hdc, pen);
+        HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, brush);
+        HPEN oldPen = (HPEN)SelectObject(hdc, pen);
         Ellipse(hdc, cx - g_radius, cy - g_radius, cx + g_radius + 1, cy + g_radius + 1);
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
         DeleteObject(brush);
         DeleteObject(pen);
         EndPaint(hwnd, &ps);
@@ -83,8 +99,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case ID_SIZE_8:  g_radius = 8;  RedrawCrosshair(); break;
         case ID_SIZE_10: g_radius = 10; RedrawCrosshair(); break;
         case ID_TRAY_EXIT:
-            KillTimer(hwnd, TIMER_TOPMOST);
-            Shell_NotifyIcon(NIM_DELETE, &nid);
             DestroyWindow(hwnd);
             break;
         }
@@ -92,6 +106,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         KillTimer(hwnd, TIMER_TOPMOST);
         Shell_NotifyIcon(NIM_DELETE, &nid);
+        DestroyMenu(hTrayMenu);
         PostQuitMessage(0);
         return 0;
     }
@@ -99,6 +114,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
+    // 单实例：防止重复启动
+    HANDLE hMutex = CreateMutex(NULL, TRUE, MUTEX_NAME);
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        MessageBox(NULL, L"准心已在运行中，请查看右下角托盘图标。",
+            L"准心覆盖", MB_ICONINFORMATION | MB_TOPMOST);
+        return 0;
+    }
+
     WNDCLASSEX wc = {};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.lpfnWndProc = WndProc;
@@ -107,20 +130,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(1));
     RegisterClassEx(&wc);
 
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
+    // 虚拟屏幕尺寸，支持多显示器
+    int sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int sy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
     g_hwnd = CreateWindowEx(
         WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
         WINDOW_CLASS, L"Crosshair",
         WS_POPUP,
-        0, 0, sw, sh,
+        sx, sy, sw, sh,
         NULL, NULL, hInstance, NULL
     );
 
     SetLayeredWindowAttributes(g_hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
-    // 每秒强制置顶一次，防止被抢
+    // 每秒强制置顶
     SetTimer(g_hwnd, TIMER_TOPMOST, 1000, NULL);
 
     // 系统托盘
@@ -130,7 +156,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(1));
-    lstrcpy(nid.szTip, L"准心覆盖 - 右键设置");
+    UpdateTrayTip();
     Shell_NotifyIcon(NIM_ADD, &nid);
 
     // 大小子菜单
@@ -157,5 +183,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    CloseHandle(hMutex);
     return 0;
 }

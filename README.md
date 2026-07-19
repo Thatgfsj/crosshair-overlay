@@ -5,9 +5,12 @@
 ## 功能
 
 - 屏幕正中央显示白色准心点
-- 全屏置顶，鼠标穿透，不影响游戏操作
-- 系统托盘图标，右键菜单可选准心大小（1px ~ 10px）
-- 单文件 exe，带图标
+- 全屏置顶 + 鼠标穿透，不影响游戏操作
+- 系统托盘图标，右键菜单可选 6 种准心大小（1px ~ 10px）
+- 托盘提示实时显示当前大小
+- 多显示器支持
+- 单实例保护，不会重复启动
+- 单文件 exe，约 80KB
 
 ## 使用
 
@@ -17,26 +20,22 @@
 - **准心大小** — 切换 6 种尺寸
 - **退出准心** — 关闭程序
 
+> ⚠️ 游戏需设为**无边框窗口全屏**模式，独占全屏下覆盖窗口不可见。
+
 ## 编译
 
-需要 [MSYS2/MinGW](https://www.msys2.org/) 或 LLVM-MinGW 工具链。
+需要 [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw) 或 MSYS2 工具链。
 
 ```bash
+# 生成图标（需要 Python，仅一次）
+python gen_icon.py
+
+# 编译
 windres resource.rc -o resource.o
 g++ -O2 -mwindows -DUNICODE -D_UNICODE -o crosshair.exe main.cpp resource.o -lgdi32 -lshell32
 ```
 
-生成图标需要 Python（运行一次 `python gen_icon.py`）。
-
-## 截图
-
-准心显示为屏幕正中的一个小白点，游戏里看起来像这样：
-
-```
-        ┃
-    ━━━━●━━━━
-        ┃
-```
+或直接运行 `build.bat`。
 
 ## License
 

@@ -3,23 +3,30 @@
 #define WINDOW_CLASS  L"CrosshairOverlay"
 #define WM_TRAYICON   (WM_USER + 1)
 #define ID_TRAY_EXIT  1001
+#define ID_SIZE_1     2006
 #define ID_SIZE_2     2001
 #define ID_SIZE_4     2002
 #define ID_SIZE_6     2003
 #define ID_SIZE_8     2004
-#define ID_SIZE_1     2006
 #define ID_SIZE_10    2005
+#define TIMER_TOPMOST 1
 
 NOTIFYICONDATA nid = {};
 HMENU hTrayMenu = NULL;
 HMENU hSizeMenu = NULL;
-int g_radius = 2;  // 默认准心半径
+int g_radius = 2;
 HWND g_hwnd = NULL;
 
 void RedrawCrosshair() {
-    if (g_hwnd) {
-        InvalidateRect(g_hwnd, NULL, TRUE);
-    }
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, TRUE);
+}
+
+void ForceTopMost() {
+    if (!g_hwnd) return;
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, sw, sh,
+        SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -41,12 +48,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd, &ps);
         return 0;
     }
+    case WM_TIMER:
+        if (wParam == TIMER_TOPMOST) {
+            ForceTopMost();
+        }
+        return 0;
     case WM_TRAYICON:
         if (lParam == WM_RBUTTONUP) {
             POINT pt;
             GetCursorPos(&pt);
             SetForegroundWindow(hwnd);
-            // 更新菜单勾选状态
             CheckMenuItem(hSizeMenu, ID_SIZE_1,  g_radius == 1  ? MF_CHECKED : MF_UNCHECKED);
             CheckMenuItem(hSizeMenu, ID_SIZE_2,  g_radius == 2  ? MF_CHECKED : MF_UNCHECKED);
             CheckMenuItem(hSizeMenu, ID_SIZE_4,  g_radius == 4  ? MF_CHECKED : MF_UNCHECKED);
@@ -66,12 +77,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case ID_SIZE_8:  g_radius = 8;  RedrawCrosshair(); break;
         case ID_SIZE_10: g_radius = 10; RedrawCrosshair(); break;
         case ID_TRAY_EXIT:
+            KillTimer(hwnd, TIMER_TOPMOST);
             Shell_NotifyIcon(NIM_DELETE, &nid);
             DestroyWindow(hwnd);
             break;
         }
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, TIMER_TOPMOST);
         Shell_NotifyIcon(NIM_DELETE, &nid);
         PostQuitMessage(0);
         return 0;
@@ -101,7 +114,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     SetLayeredWindowAttributes(g_hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
-    // 系统托盘图标
+    // 每秒强制置顶一次，防止被抢
+    SetTimer(g_hwnd, TIMER_TOPMOST, 1000, NULL);
+
+    // 系统托盘
     nid.cbSize = sizeof(NOTIFYICONDATA);
     nid.hWnd = g_hwnd;
     nid.uID = 1;
@@ -120,7 +136,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     AppendMenu(hSizeMenu, MF_STRING,               ID_SIZE_8,  L"特大 (8px)");
     AppendMenu(hSizeMenu, MF_STRING,               ID_SIZE_10, L"巨无霸 (10px)");
 
-    // 主右键菜单
+    // 主菜单
     hTrayMenu = CreatePopupMenu();
     AppendMenu(hTrayMenu, MF_POPUP, (UINT_PTR)hSizeMenu, L"准心大小");
     AppendMenu(hTrayMenu, MF_SEPARATOR, 0, NULL);
@@ -128,7 +144,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     ShowWindow(g_hwnd, SW_SHOW);
     UpdateWindow(g_hwnd);
-    SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
+    ForceTopMost();
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
